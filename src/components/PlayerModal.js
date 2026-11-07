@@ -503,8 +503,11 @@ export class PlayerModal {
           </p>
         </div>
         <div class="player-controls">
+          <button class="btn btn-primary focusable primary-focus" id="player-enter-iframe-btn" style="padding: 8px 16px; font-size: 14px;" title="Move remote control into the video player">
+            ${icon('play', { size: 16 })} Enter Video Player
+          </button>
           ${!this.nativeMode ? `
-            <button class="btn btn-secondary focusable primary-focus" id="player-skip-server-btn" style="padding: 8px 16px; font-size: 14px;" title="Skip to Next Working Server">
+            <button class="btn btn-secondary focusable" id="player-skip-server-btn" style="padding: 8px 16px; font-size: 14px;" title="Skip to Next Working Server">
               ${icon('zap', { size: 16 })} Next Server
             </button>
             <button class="btn btn-secondary focusable" id="player-server-select" style="padding: 8px 16px; font-size: 14px;" title="Change Server">
@@ -551,6 +554,11 @@ export class PlayerModal {
     }
 
     // Attach HUD listeners
+    const enterIframeBtn = this.playerEl.querySelector('#player-enter-iframe-btn');
+    if (enterIframeBtn) {
+      enterIframeBtn.addEventListener('click', () => this.enterIframeControlMode());
+    }
+
     const skipBtn = this.playerEl.querySelector('#player-skip-server-btn');
     if (skipBtn) {
       skipBtn.addEventListener('click', () => {
@@ -606,6 +614,16 @@ export class PlayerModal {
     window.addEventListener('mousemove', this.activityHandler);
 
     this.resetHudTimer();
+  }
+
+  enterIframeControlMode() {
+    const iframe = this.playerEl ? this.playerEl.querySelector('#player-iframe') : null;
+    if (!iframe) return;
+
+    nav.enterIframeControlMode(iframe, () => {
+      const enterButton = this.playerEl ? this.playerEl.querySelector('#player-enter-iframe-btn') : null;
+      if (enterButton) nav.focusElement(enterButton);
+    });
   }
 
   openEpisodeDrawer() {
@@ -831,6 +849,7 @@ export class PlayerModal {
   }
 
   close() {
+    nav.exitIframeControlMode();
     clearTimeout(this.hudTimer);
     clearTimeout(this.embedTimeoutTimer);
     if (this.activeDrawer) {
