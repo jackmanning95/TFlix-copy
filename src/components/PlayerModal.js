@@ -556,7 +556,13 @@ export class PlayerModal {
     // Attach HUD listeners
     const enterIframeBtn = this.playerEl.querySelector('#player-enter-iframe-btn');
     if (enterIframeBtn) {
-      enterIframeBtn.addEventListener('click', () => this.enterIframeControlMode());
+      if (this.currentProviderId === 'vidy') {
+        enterIframeBtn.innerHTML = icon('external-link', { size: 16 }) + ' Open Vidy in TV Browser';
+        enterIframeBtn.title = 'Open Vidy as a full page in the Samsung TV browser';
+        enterIframeBtn.addEventListener('click', () => this.openEmbedInTvBrowser());
+      } else {
+        enterIframeBtn.addEventListener('click', () => this.enterIframeControlMode());
+      }
     }
 
     const skipBtn = this.playerEl.querySelector('#player-skip-server-btn');
@@ -624,6 +630,45 @@ export class PlayerModal {
       const enterButton = this.playerEl ? this.playerEl.querySelector('#player-enter-iframe-btn') : null;
       if (enterButton) nav.focusElement(enterButton);
     });
+  }
+
+  openEmbedInTvBrowser() {
+    const isTv = this.media.media_type === 'tv' || this.media.mediaType === 'tv';
+    const season = this.media.season || 1;
+    const episode = this.media.episode || 1;
+    const url = getEmbedUrl(this.currentProviderId, isTv ? 'tv' : 'movie', this.media.id, season, episode);
+
+    if (!url) {
+      console.warn('[PlayerModal] Could not build the Vidy URL');
+      return;
+    }
+
+    // Launch the Samsung TV's registered browser using Tizen's VIEW app control.
+    // TFlix remains underneath, allowing the user to return with the TV remote's Back key.
+    try {
+      if (window.tizen && window.tizen.application &&
+          typeof window.tizen.application.launchAppControl === 'function' &&
+          typeof window.tizen.ApplicationControl === 'function') {
+        const appControl = new window.tizen.ApplicationControl(
+          'http://tizen.org/appcontrol/operation/view', url, null, null, null, null
+        );
+        window.tizen.application.launchAppControl(
+          appControl,
+          null,
+          () => console.info('[PlayerModal] Opened Vidy in the TV browser'),
+          (error) => {
+            console.warn('[PlayerModal] TV browser launch failed; trying a new window:', error);
+            window.open(url, '_blank');
+          }
+        );
+        return;
+      }
+    } catch (error) {
+      console.warn('[PlayerModal] Tizen browser launch unavailable; trying a new window:', error);
+    }
+
+    // Desktop fallback for local testing, and fallback for runtimes without Tizen AppControl.
+    window.open(url, '_blank');
   }
 
   openEpisodeDrawer() {
