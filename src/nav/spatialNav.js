@@ -30,6 +30,8 @@ class SpatialNavigationManager {
     this.backHandlers = [];
     this.mediaKeyHandlers = [];
     this.isEnabled = true;
+    this.iframeControlMode = false;
+    this.iframeControlReturnHandler = null;
     this.lastNavTime = 0;
     this.throttleMs = 40; // Prevent remote key repeats from overflowing
     this.pressTimer = null;
@@ -89,6 +91,41 @@ class SpatialNavigationManager {
     } catch (e) {
       console.warn('Tizen key registration skipped:', e);
     }
+  }
+
+  enterIframeControlMode(iframe, onReturn) {
+    if (!iframe) return;
+
+    this.iframeControlMode = true;
+    this.iframeControlReturnHandler = typeof onReturn === 'function' ? onReturn : null;
+
+    if (this.currentFocusedElement) {
+      this.currentFocusedElement.classList.remove('tflix-focused');
+      this.currentFocusedElement.blur();
+      this.currentFocusedElement = null;
+    }
+
+    // Focus the iframe itself and its browsing context. Cross-origin
+    // restrictions do not prevent focusing the iframe window.
+    try {
+      iframe.focus({ preventScroll: true });
+    } catch (e) {
+      iframe.focus();
+    }
+    try {
+      if (iframe.contentWindow) iframe.contentWindow.focus();
+    } catch (e) {
+      // Some TV firmware blocks explicit child-window focus.
+    }
+  }
+
+  exitIframeControlMode() {
+    if (!this.iframeControlMode) return;
+
+    this.iframeControlMode = false;
+    const onReturn = this.iframeControlReturnHandler;
+    this.iframeControlReturnHandler = null;
+    if (onReturn) onReturn();
   }
 
   setScope(scopeElement) {
@@ -224,6 +261,23 @@ class SpatialNavigationManager {
 
   handleKeyDown(e) {
     if (!this.isEnabled) return;
+
+    // While the user has explicitly entered the embedded player, leave
+    // directional and OK keys alone so the iframe can handle its own UI.
+    // Back exits this mode and restores focus to TFlix's player controls.
+    if (this.iframeControlMode) {
+      const iframeKeyCode = e.keyCode || e.which;
+      if (
+        iframeKeyCode === TIZEN_KEYS.BACK ||
+        e.key === 'Escape' ||
+        (iframeKeyCode === TIZEN_KEYS.BACKSPACE && !this.isTextInput(document.activeElement))
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.exitIframeControlMode();
+      }
+      return;
+    }
 
     const now = Date.now();
     if (now - this.lastNavTime < this.throttleMs) {
