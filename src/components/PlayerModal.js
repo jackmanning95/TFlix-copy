@@ -528,11 +528,12 @@ export class PlayerModal {
         id="player-iframe"
         class="player-iframe"
         src="${embedUrl}"
-        tabindex="-1"
+        tabindex="0"
+        aria-label="Video player. Press OK to use the player controls."
         allowfullscreen="true"
         webkitallowfullscreen="true"
         mozallowfullscreen="true"
-        allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+        allow="autoplay *; fullscreen *; encrypted-media; picture-in-picture"
       ></iframe>
     `;
 
