@@ -567,9 +567,9 @@ export class PlayerModal {
     const enterIframeBtn = this.playerEl.querySelector('#player-enter-iframe-btn');
     if (enterIframeBtn) {
       if (this.currentProviderId === 'vidy') {
-        enterIframeBtn.innerHTML = icon('external-link', { size: 16 }) + ' Open Vidy in TV Browser';
-        enterIframeBtn.title = 'Open Vidy as a full page in the Samsung TV browser';
-        enterIframeBtn.addEventListener('click', () => this.openEmbedInTvBrowser());
+        enterIframeBtn.innerHTML = icon('play', { size: 16 }) + ' Vidy Player Controls';
+        enterIframeBtn.title = 'Move remote focus into Vidy’s embedded player controls';
+        enterIframeBtn.addEventListener('click', () => this.enterIframeControlMode());
       } else {
         enterIframeBtn.addEventListener('click', () => this.enterIframeControlMode());
       }
