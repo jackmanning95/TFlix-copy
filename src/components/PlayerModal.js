@@ -31,6 +31,16 @@ export class PlayerModal {
     this.attemptedProviders = new Set();
     this.hasPlaybackStarted = false;
     this.lastEmbedProgressSaveAt = 0;
+    this.externalBrowserWasHidden = false;
+    this.externalBrowserReturnHandler = () => {
+      if (document.visibilityState === 'hidden') {
+        this.externalBrowserWasHidden = true;
+        return;
+      }
+      if (!this.externalBrowserWasHidden) return;
+      this.externalBrowserWasHidden = false;
+      this.handleExternalBrowserReturn();
+    };
 
     this.backHandler = this.close.bind(this);
     this.mediaKeyHandler = this.handleMediaKey.bind(this);
@@ -486,7 +496,7 @@ export class PlayerModal {
     // overrideUrl: a "direct" provider that resolved to { embedUrl } instead
     // of a raw stream — the URL is already final, skip the {id} templating
     // that getEmbedUrl() does for classic embed-type providers.
-    const embedUrl = overrideUrl || getEmbedUrl(this.currentProviderId, isTv ? 'tv' : 'movie', this.media.id, season, episode, startAt);
+    const embedUrl = overrideUrl || this.getCurrentEmbedUrl(isTv ? 'tv' : 'movie', season, episode);
 
     this.hasPlaybackStarted = false;
     clearTimeout(this.embedTimeoutTimer);
@@ -632,16 +642,47 @@ export class PlayerModal {
     });
   }
 
+  getCurrentEmbedUrl(mediaType, season = 1, episode = 1) {
+    let url = getEmbedUrl(this.currentProviderId, mediaType, this.media.id, season, episode);
+    if (!url || this.currentProviderId !== 'vidy') return url;
+
+    // Vidy's progress query parameter is a percentage, not a time in seconds.
+    const saved = storage.getProgress(this.media.source || 'tmdb', this.getStorageId(), season, episode);
+    if (saved && typeof saved.progress === 'number' && saved.progress > 0 && saved.progress < 95) {
+      const separator = url.includes('?') ? '&' : '?';
+      url = `${url}${separator}progress=${Math.round(saved.progress)}`;
+    }
+    return url;
+  }
+
+  handleExternalBrowserReturn() {
+    if (!this.playerEl || !document.body.contains(this.playerEl)) return;
+    nav.setScope(this.playerEl);
+    const openButton = this.playerEl.querySelector('#player-enter-iframe-btn');
+    if (openButton) {
+      openButton.innerHTML = icon('external-link', { size: 16 }) + ' Open Vidy Again';
+      openButton.title = 'Reopen the Vidy player in the Samsung TV browser';
+      nav.focusElement(openButton);
+    }
+    const meta = this.playerEl.querySelector('#current-player-meta');
+    if (meta && !meta.textContent.includes('Returned from Vidy')) {
+      meta.insertAdjacentHTML('beforeend', ' <span class="player-fallback-tag">Returned from Vidy</span>');
+    }
+  }
+
   openEmbedInTvBrowser() {
     const isTv = this.media.media_type === 'tv' || this.media.mediaType === 'tv';
     const season = this.media.season || 1;
     const episode = this.media.episode || 1;
-    const url = getEmbedUrl(this.currentProviderId, isTv ? 'tv' : 'movie', this.media.id, season, episode);
+    const url = this.getCurrentEmbedUrl(isTv ? 'tv' : 'movie', season, episode);
 
     if (!url) {
       console.warn('[PlayerModal] Could not build the Vidy URL');
       return;
     }
+
+    // Watch for TFlix becoming visible again after the TV browser is closed.
+    document.addEventListener('visibilitychange', this.externalBrowserReturnHandler);
 
     // Launch the Samsung TV's registered browser using Tizen's VIEW app control.
     // TFlix remains underneath, allowing the user to return with the TV remote's Back key.
@@ -655,7 +696,14 @@ export class PlayerModal {
         window.tizen.application.launchAppControl(
           appControl,
           null,
-          () => console.info('[PlayerModal] Opened Vidy in the TV browser'),
+          () => {
+            console.info('[PlayerModal] Opened Vidy in the TV browser');
+            const openButton = this.playerEl && this.playerEl.querySelector('#player-enter-iframe-btn');
+            if (openButton) {
+              openButton.innerHTML = icon('external-link', { size: 16 }) + ' Vidy Opened · Press Back to Return';
+              openButton.title = 'Use the Samsung remote Back key to return to TFlix';
+            }
+          },
           (error) => {
             console.warn('[PlayerModal] TV browser launch failed; trying a new window:', error);
             window.open(url, '_blank');
@@ -710,7 +758,7 @@ export class PlayerModal {
       metaEl.innerHTML = `Season ${season} • Episode ${episode} | Server: <span>${this.getProviderName(this.currentProviderId)}</span>`;
     }
 
-    const embedUrl = getEmbedUrl(this.currentProviderId, 'tv', this.media.id, season, episode);
+    const embedUrl = this.getCurrentEmbedUrl('tv', season, episode);
     const iframe = this.playerEl ? this.playerEl.querySelector('#player-iframe') : null;
     if (iframe) {
       iframe.src = embedUrl;
@@ -725,48 +773,61 @@ export class PlayerModal {
         const isTv = this.media.media_type === 'tv' || this.media.mediaType === 'tv';
         const season = this.media.season || 1;
         const episode = this.media.episode || 1;
+        const isVidy = event.origin === 'https://vidy.st' || event.origin === 'https://www.vidy.st';
+        const isVidLink = Boolean(event.origin && event.origin.includes('vidlink.pro'));
+        if (!isVidy && !isVidLink) return;
 
-        // VidLink postMessage event handler
-        if (event.origin && event.origin.includes('vidlink.pro')) {
-          const data = event.data;
-          if (data) {
-            this.hasPlaybackStarted = true;
-            clearTimeout(this.embedTimeoutTimer);
-
-            // Track playback time update
-            if (data.type === 'PLAYER_EVENT' || data.event === 'timeupdate' || typeof data.currentTime === 'number') {
-              const cur = data.currentTime || (data.data && data.data.currentTime);
-              const dur = data.duration || (data.data && data.data.duration);
-              // Throttled the same way VideoPlayer.js's native-player path
-              // saves progress (a 3s setInterval there) — VidLink can post
-              // timeupdate messages far more often than that, and each save
-              // is a synchronous localStorage read+write of the whole
-              // history list, which is main-thread work best not repeated
-              // several times a second during playback.
-              const now = Date.now();
-              if (typeof cur === 'number' && cur > 5 && now - this.lastEmbedProgressSaveAt >= 3000) {
-                this.lastEmbedProgressSaveAt = now;
-                storage.updateProgress(this.media.source || 'tmdb', this.getStorageId(), season, episode, cur, dur);
-              }
-            }
-            // Auto advance next episode on ended
-            if (data.event === 'ended' && isTv && this.onNextEpisode) {
-              this.close();
-              this.onNextEpisode({
-                ...this.media,
-                episode: episode + 1
-              });
-            }
+        // Vidy posts JSON strings; VidLink integrations commonly post objects.
+        let data = event.data;
+        if (typeof data === 'string') {
+          try {
+            data = JSON.parse(data);
+          } catch {
+            return;
           }
         }
+        if (!data || typeof data !== 'object') return;
+
+        if (isVidy) {
+          const playerEvent = data.type === 'PLAYER_EVENT' ? data.event : data.event;
+          if (playerEvent === 'play' || playerEvent === 'timeupdate') {
+            this.hasPlaybackStarted = true;
+            clearTimeout(this.embedTimeoutTimer);
+          }
+          if (typeof data.currentTime === 'number' && data.currentTime > 5) {
+            const now = Date.now();
+            if (now - this.lastEmbedProgressSaveAt >= 3000) {
+              this.lastEmbedProgressSaveAt = now;
+              storage.updateProgress(this.media.source || 'tmdb', this.getStorageId(), season, episode, data.currentTime, data.duration);
+            }
+          }
+          // Vidy's own nextEpisode/autoplayNextEpisode options handle TV progression.
+          return;
+        }
+
+        // Existing VidLink event handling.
+        this.hasPlaybackStarted = true;
+        clearTimeout(this.embedTimeoutTimer);
+        if (data.type === 'PLAYER_EVENT' || data.event === 'timeupdate' || typeof data.currentTime === 'number') {
+          const cur = data.currentTime || (data.data && data.data.currentTime);
+          const dur = data.duration || (data.data && data.data.duration);
+          const now = Date.now();
+          if (typeof cur === 'number' && cur > 5 && now - this.lastEmbedProgressSaveAt >= 3000) {
+            this.lastEmbedProgressSaveAt = now;
+            storage.updateProgress(this.media.source || 'tmdb', this.getStorageId(), season, episode, cur, dur);
+          }
+        }
+        if (data.event === 'ended' && isTv && this.onNextEpisode) {
+          this.close();
+          this.onNextEpisode({ ...this.media, episode: episode + 1 });
+        }
       } catch (e) {
-        // Ignore cross-origin parsing errors
+        // Ignore malformed or unrelated cross-origin messages.
       }
     };
 
     window.addEventListener('message', this.postMessageListener);
   }
-
   getProviderName(providerId) {
     const provider = getProviderById(providerId);
     return provider ? provider.name : (providerId || 'None');
@@ -905,6 +966,8 @@ export class PlayerModal {
       window.removeEventListener('message', this.postMessageListener);
       this.postMessageListener = null;
     }
+    document.removeEventListener('visibilitychange', this.externalBrowserReturnHandler);
+    this.externalBrowserWasHidden = false;
     window.removeEventListener('keydown', this.activityHandler, { capture: true });
     window.removeEventListener('mousemove', this.activityHandler);
     nav.popBackHandler(this.backHandler);
