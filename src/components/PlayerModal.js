@@ -643,11 +643,12 @@ export class PlayerModal {
   }
 
   getCurrentEmbedUrl(mediaType, season = 1, episode = 1) {
-    let url = getEmbedUrl(this.currentProviderId, mediaType, this.media.id, season, episode);
+    const saved = storage.getProgress(this.media.source || 'tmdb', this.getStorageId(), season, episode);
+    const startAt = saved && saved.currentTime > 15 ? saved.currentTime : 0;
+    let url = getEmbedUrl(this.currentProviderId, mediaType, this.media.id, season, episode, startAt);
     if (!url || this.currentProviderId !== 'vidy') return url;
 
     // Vidy's progress query parameter is a percentage, not a time in seconds.
-    const saved = storage.getProgress(this.media.source || 'tmdb', this.getStorageId(), season, episode);
     if (saved && typeof saved.progress === 'number' && saved.progress > 0 && saved.progress < 95) {
       const separator = url.includes('?') ? '&' : '?';
       url = `${url}${separator}progress=${Math.round(saved.progress)}`;
@@ -789,7 +790,7 @@ export class PlayerModal {
         if (!data || typeof data !== 'object') return;
 
         if (isVidy) {
-          const playerEvent = data.type === 'PLAYER_EVENT' ? data.event : data.event;
+          const playerEvent = data.event;
           if (playerEvent === 'play' || playerEvent === 'timeupdate') {
             this.hasPlaybackStarted = true;
             clearTimeout(this.embedTimeoutTimer);
